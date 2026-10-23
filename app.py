@@ -544,7 +544,7 @@ if st.session_state.page == "Home":
                 )
 
     cv_stats, test_stats, stats_note = model_performance()
-    st.markdown('<h2 class="section-title">Our AI Model Performance</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-title">AI Model Performance</h2>', unsafe_allow_html=True)
     st.markdown(f'<p class="section-subtitle">{html.escape(stats_note)}</p>', unsafe_allow_html=True)
 
     stat_cols = st.columns(3, gap="medium")
