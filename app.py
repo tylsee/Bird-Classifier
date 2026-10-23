@@ -98,9 +98,15 @@ h1, h2, h3, p { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI
     letter-spacing: 2px; text-transform: uppercase; font: 650 0.67rem monospace;
 }
 .hero-title {
-    font-weight: 760; color: var(--forest); font-size: clamp(2.5rem, 4.5vw, 3.65rem);
-    letter-spacing: -2.2px; line-height: 1.1; margin: 17px auto 12px;
+    font-weight: 760;
+    color: var(--forest);
+    font-size: clamp(2.5rem, 4.5vw, 3.65rem);
+    letter-spacing: -2.2px;
+    line-height: 1.1;
+    margin: 17px auto 12px;
     max-width: 760px;
+    text-align: center;
+    display: block;
 }
 .hero-subtitle { color: #62736a; font-size: 1.08rem; margin: 0; }
 .panel-heading { color: var(--forest); font-size: 1.07rem; font-weight: 700; margin: 0 0 0.7rem; }
