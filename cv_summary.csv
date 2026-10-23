@@ -1,0 +1,4 @@
+training_method,mode,mean_top1,mean_macro,sd_macro,median_best_epoch
+Partial Fine-Tuning,partial_finetune,65.4699771108292,64.95550745550746,1.2377394584687846,9.0
+Full Fine-Tuning,full_finetune,63.87212648688555,63.39963323713323,0.7621718935336791,15.0
+Frozen ResNet18,head_only,57.5842819255628,57.14915223665224,1.4398491456717422,19.0
