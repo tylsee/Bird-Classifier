@@ -394,7 +394,7 @@ if "page" not in st.session_state:
 nav_logo, nav_spacer, nav_home, nav_about = st.columns([4.9, 3.0, 1.0, 1.45], vertical_alignment="center")
 with nav_logo:
     st.markdown(
-        f'<div class="logo-bar"><span class="logo-mark">{BIRD_SVG}</span>Bird Classifier AI AI</div>',
+        f'<div class="logo-bar"><span class="logo-mark">{BIRD_SVG}</span>Bird Classifier AI</div>',
         unsafe_allow_html=True,
     )
 with nav_home:
@@ -629,7 +629,7 @@ else:
 
 
 st.markdown(
-    f'<div class="site-footer"><b>Bird Classifier AI AI | Applied Machine Learning Project</b>'
-    f'<span>© {date.today().year} Bird Classifier AI AI</span></div>',
+    f'<div class="site-footer"><b>Bird Classifier AI | Applied Machine Learning Project</b>'
+    f'<span>© {date.today().year} Bird Classifier AI</span></div>',
     unsafe_allow_html=True,
 )
