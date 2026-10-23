@@ -1,10 +1,3 @@
-"""BirdLens AI — ResNet18 bird identifier.
-
-A two-page Streamlit application styled after the user's BirdLens mockups.
-Place ResNet18 checkpoints in ./models; the app performs REAL local PyTorch
-inference on CPU without a separate API or access to the CUB-200 dataset.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -47,11 +40,11 @@ MODEL_TO_MODE = {
 }
 
 st.set_page_config(
-    page_title="BirdLens AI | Bird Identification",
+    page_title="Bird Classifier AI | Bird Identification",
     page_icon="🐦",
     layout="wide",
     initial_sidebar_state="collapsed",
-    menu_items={"About": "BirdLens AI — COS30082 Applied Machine Learning project"},
+    menu_items={"About": "Bird Classifier AI — COS30082 Applied Machine Learning project"},
 )
 
 # No server-side copy of uploaded files is deliberately retained.
@@ -401,7 +394,7 @@ if "page" not in st.session_state:
 nav_logo, nav_spacer, nav_home, nav_about = st.columns([4.9, 3.0, 1.0, 1.45], vertical_alignment="center")
 with nav_logo:
     st.markdown(
-        f'<div class="logo-bar"><span class="logo-mark">{BIRD_SVG}</span>BirdLens AI</div>',
+        f'<div class="logo-bar"><span class="logo-mark">{BIRD_SVG}</span>Bird Classifier AI AI</div>',
         unsafe_allow_html=True,
     )
 with nav_home:
@@ -424,7 +417,7 @@ if st.session_state.page == "Home":
         """
         <div class="hero">
           <span class="eyebrow">CUB-200 · 200 Bird Species</span>
-          <h1 class="hero-title">Discover What Bird You're<br>Looking At</h1>
+          <h1 class="hero-title">Identify What Bird You're<br>Looking At</h1>
           <p class="hero-subtitle">Upload a bird photo and let our AI identify its species.</p>
         </div>
         """,
@@ -601,12 +594,12 @@ else:
         """
         <div class="about-wrap">
            <div class="about-hero">
-             <h1>About BirdLens AI</h1>
+             <h1>About Bird Classifier AI</h1>
              <p>A bird species identification tool built for an Applied Machine Learning university project.</p>
            </div>
            <section class="info-card">
-             <h3>What is BirdLens AI?</h3>
-             <p>BirdLens AI is an image classification application designed to identify
+             <h3>What is Bird Classifier AI?</h3>
+             <p>Bird Classifier AI is an image classification application designed to identify
              200 bird species using deep learning.</p>
            </section>
            <section class="info-card">
@@ -636,7 +629,7 @@ else:
 
 
 st.markdown(
-    f'<div class="site-footer"><b>BirdLens AI | Applied Machine Learning Project</b>'
-    f'<span>© {date.today().year} BirdLens AI</span></div>',
+    f'<div class="site-footer"><b>Bird Classifier AI AI | Applied Machine Learning Project</b>'
+    f'<span>© {date.today().year} Bird Classifier AI AI</span></div>',
     unsafe_allow_html=True,
 )
