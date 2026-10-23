@@ -1,9 +1,0 @@
-Place one or more trained model checkpoints in this directory.
-
-Supported filenames:
-- resnet18_final.pth              (previous partial fine-tuning notebook)
-- resnet18_head_only.pth          (combined notebook: frozen)
-- resnet18_partial_finetune.pth   (combined notebook: partial)
-- resnet18_full_finetune.pth      (combined notebook: full)
-
-This template DOES NOT include trained model weights.
