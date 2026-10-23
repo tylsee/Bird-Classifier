@@ -1,304 +1,642 @@
-"""CUB-200 Bird Species Classifier — Streamlit application.
+"""BirdLens AI — ResNet18 bird identifier.
 
-Runs ResNet18 checkpoints produced by the user's Colab notebooks.
-Inference is CPU-compatible and uses the ImageNet evaluation transform.
-No dataset is needed to serve predictions.
+A two-page Streamlit application styled after the user's BirdLens mockups.
+Place ResNet18 checkpoints in ./models; the app performs REAL local PyTorch
+inference on CPU without a separate API or access to the CUB-200 dataset.
 """
+
 from __future__ import annotations
 
-from io import BytesIO
-from pathlib import Path
+import csv
+import html
+import io
 import json
+from datetime import date
+from pathlib import Path
 
-import pandas as pd
-from PIL import Image, UnidentifiedImageError
 import streamlit as st
 import torch
+from PIL import Image, ImageOps, UnidentifiedImageError
 from torch import nn
-from torchvision.models import ResNet18_Weights, resnet18
+from torchvision import transforms
+from torchvision.models import resnet18
 
 
-ROOT = Path(__file__).resolve().parent
-MODEL_DIR = ROOT / "models"
+# ---------------------------------------------------------------------------
+# APP CONFIGURATION
+# ---------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_DIR = BASE_DIR / "models"
 NUM_CLASSES = 200
+MAX_FILE_MB = 10
 
-# Both notebook variants are supported. Add only the checkpoints you actually have.
-CHECKPOINT_CHOICES = {
-    "Partial Fine-Tuning · combined experiment": "resnet18_partial_finetune.pth",
-    "Full Fine-Tuning · combined experiment": "resnet18_full_finetune.pth",
-    "Frozen Backbone · combined experiment": "resnet18_head_only.pth",
-    "Partial Fine-Tuning · earlier experiment": "resnet18_final.pth",
+# Each model can use checkpoints from the combined notebook OR the earlier run.
+MODEL_FILES = {
+    "Partial Fine-Tuning ResNet18": [
+        "resnet18_partial_finetune.pth",
+        "resnet18_final.pth",
+    ],
+    "Frozen ResNet18": ["resnet18_head_only.pth"],
+    "Full Fine-Tuning ResNet18": ["resnet18_full_finetune.pth"],
+}
+
+MODEL_TO_MODE = {
+    "Frozen ResNet18": "head_only",
+    "Partial Fine-Tuning ResNet18": "partial_finetune",
+    "Full Fine-Tuning ResNet18": "full_finetune",
 }
 
 st.set_page_config(
-    page_title="BirdLens | CUB-200 Classifier",
+    page_title="BirdLens AI | Bird Identification",
     page_icon="🐦",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
+    menu_items={"About": "BirdLens AI — COS30082 Applied Machine Learning project"},
 )
 
-st.markdown(
-    """
-    <style>
-    .stApp {background: linear-gradient(165deg, #f5f8fa 0%, #edf2f5 100%);}
-    .block-container {padding-top: 2rem; max-width: 1220px;}
-    [data-testid="stSidebar"] {background: #e7f0ee;}
-    .hero {border-radius: 18px; padding: 1.6rem 2rem; background:
-           linear-gradient(110deg, #133b46 0%, #155e63 100%); color: #fff;}
-    .hero h1 {font-size: 2.4rem; margin: 0; color: #fff;}
-    .hero p {font-size: 1.05rem; margin-top: .55rem; color: #dbeef0;}
-    .eyebrow {font-size: .8rem; font-weight: 700; text-transform: uppercase;
-              letter-spacing: .15em; color: #a8dbe0;}
-    .section-title {font-size: 1.3rem; font-weight: 720; color: #153841; margin-top: 0.8rem;}
-    .footer-note {font-size: .82rem; color: #64747a; margin-top: 2rem;}
-    </style>
-    """,
-    unsafe_allow_html=True,
+# No server-side copy of uploaded files is deliberately retained.
+Image.MAX_IMAGE_PIXELS = 30_000_000
+
+STYLES = """
+<style>
+:root {
+    --forest: #205f4f;
+    --forest-dark: #174b3e;
+    --sage: #ebf3ee;
+    --paper: #f7faf8;
+    --body: #54665d;
+    --line: #dde9e2;
+}
+.stApp, [data-testid="stAppViewContainer"] {
+    background: var(--paper);
+    color: #193e34;
+}
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stToolbar"] { opacity: 0.4; }
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+.block-container {
+    max-width: 1215px;
+    padding-top: 1.15rem;
+    padding-bottom: 1.6rem;
+}
+@media (max-width: 740px) {
+  .block-container { padding: 0.8rem 1rem 1.8rem; }
+  .hero-title { font-size: 2.35rem !important; }
+  .hero { padding: 2rem 0 1.5rem !important; }
+}
+* { scroll-behavior: smooth; }
+h1, h2, h3, p { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.logo-bar {
+    display: flex; align-items: center; gap: 12px; height: 47px;
+    font-size: 1.22rem; font-weight: 750; color: var(--forest);
+    letter-spacing: -0.7px;
+}
+.logo-mark {
+    width: 37px; height: 37px; background: var(--forest); border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+}
+.logo-mark svg { width: 22px; height: 22px; stroke: white; fill: none; stroke-width: 1.8; }
+.nav-shadow { border-top: 1px solid #e9efea; margin-top: 0.5rem; }
+.hero { text-align: center; padding: 2.5rem 0 1.9rem; }
+.eyebrow {
+    display: inline-flex; border: 1px solid var(--line); border-radius: 50px;
+    padding: 8px 15px; background: white; color: #578575;
+    letter-spacing: 2px; text-transform: uppercase; font: 650 0.67rem monospace;
+}
+.hero-title {
+    font-weight: 760; color: var(--forest); font-size: clamp(2.5rem, 4.5vw, 3.65rem);
+    letter-spacing: -2.2px; line-height: 1.1; margin: 17px auto 12px;
+    max-width: 760px;
+}
+.hero-subtitle { color: #62736a; font-size: 1.08rem; margin: 0; }
+.panel-heading { color: var(--forest); font-size: 1.07rem; font-weight: 700; margin: 0 0 0.7rem; }
+[data-testid="stVerticalBlockBorderWrapper"] > div[data-testid="stVerticalBlock"] {
+    border-color: var(--line);
+}
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 22px !important;
+    border-color: var(--line) !important;
+    background: white;
+}
+/* Text-input/drop zone matching the visual references */
+[data-testid="stFileUploader"] {
+    border: none;
+}
+[data-testid="stFileUploader"] section {
+    min-height: 215px;
+    border: 1.6px dashed #c7decf !important;
+    background: #fcfefd;
+    border-radius: 15px;
+}
+[data-testid="stFileUploader"] section:hover { border-color: #78af95 !important; }
+[data-testid="stFileUploader"] section > div { padding: 1.3rem !important; }
+[data-testid="stFileUploader"] button {
+    border: 1px solid #cbded1 !important;
+    color: var(--forest) !important;
+    background-color: white !important;
+}
+.stButton button[kind="primary"], button[data-testid="stBaseButton-primary"] {
+    background: var(--forest) !important;
+    border: none !important;
+    border-radius: 10px !important;
+    min-height: 48px;
+    color: #fff !important;
+    font-weight: 700;
+}
+.stButton button[kind="primary"]:hover, button[data-testid="stBaseButton-primary"]:hover {
+    background: var(--forest-dark) !important;
+}
+.stButton button:disabled { opacity: 0.42; }
+.stButton button[kind="secondary"], button[data-testid="stBaseButton-secondary"] {
+    border: none;
+    border-radius: 22px;
+    background: #edf4ef;
+    color: var(--forest);
+    font-weight: 600;
+}
+[data-testid="stSelectbox"] label p { color: var(--forest) !important; font-weight: 650; }
+[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+    border: 1px solid var(--line); border-radius: 10px; background: white;
+}
+.help-text { color: #84928b; font-size: 0.76rem; text-align: center; margin: 8px 0 0; }
+.empty-state {
+    min-height: 315px; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; gap: 13px;
+    color: #6a7b73; text-align: center;
+}
+.empty-icon {
+    height: 61px; width: 61px; border-radius: 50%;
+    display: grid; place-items: center; background: #eaf4ee;
+    font-size: 1.65rem; color: var(--forest);
+}
+.empty-state p { max-width: 270px; font-size: 0.95rem; line-height: 1.5; }
+.result-top { background: #eff6f1; border: 1px solid #d9ebe0; border-radius: 15px; padding: 16px; }
+.result-kicker { font-size: 0.72rem; letter-spacing: 1.3px; text-transform: uppercase;
+    color: #678c77; font-weight: 700; }
+.result-name { color: var(--forest-dark); font-size: 1.55rem; font-weight: 800;
+    letter-spacing: -0.5px; margin: 7px 0; line-height: 1.15; }
+.result-score { color: var(--forest); font-size: 1.6rem; font-weight: 750; }
+.result-caption { color: #687e71; font-size: 0.79rem; margin-top: 4px; }
+.rank-title { color: var(--forest); font-weight: 750; margin: 17px 0 12px; }
+.rank-row { margin: 11px 0; }
+.rank-meta { display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; color: #335f4f; font-size: 0.85rem; margin-bottom: 6px; }
+.rank-meta b { font-weight: 750; }
+.rank-name { overflow-wrap: anywhere; }
+.bar-track { height: 9px; background: #e5eee8; border-radius: 20px; overflow: hidden; }
+.bar-fill { height: 100%; background: #66a58a; border-radius: 20px; }
+.bar-fill.top { background: var(--forest); }
+.section-title { text-align: center; color: var(--forest); font-size: 1.9rem;
+    letter-spacing: -0.9px; font-weight: 800; margin: 48px 0 4px; }
+.section-subtitle { text-align: center; color: #7b8b82; font-size: 0.9rem; margin: 0 0 24px; }
+.metric-card { background: #fff; border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 10px; text-align: center; }
+.metric-label { color: #7e8e85; letter-spacing: 1.2px; font: 700 0.68rem monospace; }
+.metric-value { font-size: 1.95rem; color: var(--forest); font-weight: 800; margin: 8px 0 1px; }
+.table-shell { border: 1px solid var(--line); border-radius: 15px; overflow: hidden;
+    margin-top: 22px; background: white; }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.compare-table th { background: #f7faf8; padding: 15px 17px; text-align: left;
+    color: var(--forest-dark); font-size: 0.79rem; }
+.compare-table td { padding: 16px 17px; color: #376b58; border-top: 1px solid #e8eee9; }
+.compare-table td:first-child { font-weight: 650; }
+.compare-table .pending { color: #a2aaa4; font-style: italic; }
+.table-note { color: #8b978f; text-align: center; font-size: 0.77rem; margin-top: 11px; }
+.about-wrap { max-width: 850px; margin: 0 auto; }
+.about-hero { padding: 3.5rem 0 1.5rem; }
+.about-hero h1 { color: var(--forest); font-size: 2.55rem; font-weight: 800; letter-spacing: -1.1px; }
+.about-hero p { color: #5d7166; font-size: 1.04rem; margin: 3px 0 0; }
+.info-card { border: 1px solid var(--line); border-radius: 19px; background: white;
+    padding: 25px 27px; margin-bottom: 17px; }
+.info-card h3 { font-size: 1.05rem; text-transform: uppercase; letter-spacing: 1.35px;
+    margin: 0 0 15px; color: var(--forest); font-weight: 700; }
+.info-card p { margin: 0 0 11px; color: #62746a; line-height: 1.75; font-size: 0.96rem; }
+.info-card p:last-child { margin-bottom: 0; }
+.info-card.alert { background: #f7f7f1; border-color: #e8dfc3; }
+.steps { display: grid; gap: 13px; }
+.step { display: flex; align-items: center; gap: 13px; color: #62746a; font-size: 0.96rem; }
+.step-num { background: #eaf3ed; color: var(--forest); width: 25px; height: 25px;
+    border-radius: 50%; display: grid; place-items: center; font-size: 0.77rem; font-weight: 750; }
+.site-footer { border-top: 1px solid #e5eee8; margin-top: 64px;
+    padding: 25px 0 3px; display: flex; align-items: center;
+    justify-content: space-between; gap: 15px; font-size: 0.80rem; color: #839189; }
+.site-footer b { color: var(--forest); }
+@media (max-width: 560px) {
+ .compare-table { font-size: 0.72rem; }
+ .compare-table th, .compare-table td { padding: 10px 8px; }
+ .site-footer { flex-direction: column; align-items: flex-start; }
+ .about-hero h1 { font-size: 2rem; }
+}
+</style>
+"""
+
+st.markdown(STYLES, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# DATA AND INFERENCE
+# ---------------------------------------------------------------------------
+EVAL_TRANSFORM = transforms.Compose(
+    [
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ]
 )
 
 
-@st.cache_resource(show_spinner="Loading ResNet18 checkpoint…")
-def load_checkpoint(path_str: str):
-    """Cache the trained model across reruns; never download pretrained weights."""
-    checkpoint = torch.load(path_str, map_location="cpu", weights_only=True)
-    if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
-        raise ValueError("Checkpoint does not contain 'model_state_dict'.")
-    if int(checkpoint.get("num_classes", NUM_CLASSES)) != NUM_CLASSES:
-        raise ValueError("Expected 200 bird species in the checkpoint.")
+def discover_models() -> dict[str, Path]:
+    found: dict[str, Path] = {}
+    for label, candidate_names in MODEL_FILES.items():
+        for filename in candidate_names:
+            path = MODEL_DIR / filename
+            if path.is_file():
+                found[label] = path
+                break
+    return found
 
+
+def read_class_names(checkpoint: dict) -> list[str]:
     names = checkpoint.get("class_names")
     if names is None:
-        names_path = ROOT / "class_names.json"
-        if not names_path.exists():
-            raise ValueError("Missing class names: include class_names in the checkpoint or upload class_names.json.")
-        names = json.loads(names_path.read_text(encoding="utf-8"))
-
+        for file in [BASE_DIR / "class_names.json", MODEL_DIR / "class_names.json"]:
+            if file.is_file():
+                names = json.loads(file.read_text(encoding="utf-8"))
+                break
     if isinstance(names, dict):
-        names = [names[str(i)] for i in range(NUM_CLASSES)]
+        names = [names.get(str(i), names.get(i)) for i in range(NUM_CLASSES)]
     if not isinstance(names, (list, tuple)) or len(names) != NUM_CLASSES:
-        raise ValueError("Checkpoint must supply exactly 200 ordered class names.")
-    names = [str(name) for name in names]
+        raise ValueError("Checkpoint must contain 200 ordered class names or provide class_names.json.")
+    names = [str(name).strip() for name in names]
+    if any(not name or name == "None" for name in names):
+        raise ValueError("Invalid class names in checkpoint.")
     if len(set(names)) != NUM_CLASSES:
-        raise ValueError("Species names must be unique to display prediction scores.")
+        raise ValueError("Bird class names must be unique.")
+    return names
 
-    model = resnet18(weights=None)  # No network access needed at deployment.
+
+@st.cache_resource(show_spinner="Loading trained bird classifier…")
+def load_model(path: str, modified_timestamp_ns: int):
+    """Load only YOUR trained checkpoint, never download an ImageNet model."""
+    _ = modified_timestamp_ns  # Bust cache if model file changes.
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
+        raise ValueError("Checkpoint does not include 'model_state_dict'.")
+    if int(checkpoint.get("num_classes", NUM_CLASSES)) != NUM_CLASSES:
+        raise ValueError("Expected a checkpoint with 200 bird classes.")
+
+    names = read_class_names(checkpoint)
+    model = resnet18(weights=None)
     model.fc = nn.Sequential(
         nn.Dropout(0.3),
         nn.Linear(model.fc.in_features, NUM_CLASSES),
     )
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.eval()
-
-    return model, names, checkpoint
-
-
-@st.cache_data
-
-def preprocess_information():
-    return "Resize to 256 px → centre crop 224×224 → ImageNet normalisation"
+    return model, names
 
 
-EVAL_TRANSFORM = ResNet18_Weights.IMAGENET1K_V1.transforms()
+def predict_bird(upload_bytes: bytes, model_path: Path) -> list[dict]:
+    with Image.open(io.BytesIO(upload_bytes)) as img:
+        corrected = ImageOps.exif_transpose(img)
+        rgb = corrected.convert("RGB")
+        tensor = EVAL_TRANSFORM(rgb).unsqueeze(0)
 
-
-def predict_species(image: Image.Image, model: nn.Module, class_names: list[str]) -> pd.DataFrame:
-    """Return the five most likely species with original 200-way softmax scores."""
-    tensor = EVAL_TRANSFORM(image.convert("RGB")).unsqueeze(0)
+    model, class_names = load_model(str(model_path), model_path.stat().st_mtime_ns)
     with torch.inference_mode():
         logits = model(tensor)
-        scores = torch.softmax(logits, dim=1).squeeze(0)
-        top_scores, top_indices = torch.topk(scores, k=5)
-    return pd.DataFrame(
-        {
-            "Rank": list(range(1, 6)),
-            "Bird species": [class_names[int(i)] for i in top_indices.tolist()],
-            "Score (%)": [round(float(v) * 100, 2) for v in top_scores.tolist()],
-        }
-    )
+        probabilities = logits.softmax(dim=1)[0]
+        scores, indices = probabilities.topk(5)
+
+    return [
+        {"species": class_names[int(index)], "score": float(score) * 100}
+        for score, index in zip(scores.cpu(), indices.cpu())
+    ]
 
 
-def load_csv_or_none(filename: str):
-    path = ROOT / filename
-    if not path.exists():
-        return None
+def find_result_file(filename: str) -> Path | None:
+    for candidate in [BASE_DIR / filename, BASE_DIR / "results" / filename]:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def read_csv_rows(filename: str) -> list[dict]:
+    p = find_result_file(filename)
+    if p is None:
+        return []
     try:
-        return pd.read_csv(path)
-    except (pd.errors.ParserError, OSError, UnicodeDecodeError, ValueError):
-        return None
+        with p.open("r", encoding="utf-8-sig", newline="") as f:
+            return list(csv.DictReader(f))
+    except (OSError, UnicodeError, csv.Error):
+        return []
 
 
-st.markdown(
-    """
-    <div class="hero">
-      <div class="eyebrow">Applied Machine Learning · CUB-200</div>
-      <h1>BirdLens</h1>
-      <p>Bird species recognition powered by transfer learning with ResNet18.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+def metric_text(value) -> str:
+    try:
+        return f"{float(value):.2f}%"
+    except (ValueError, TypeError):
+        return '<span class="pending">Pending</span>'
 
-available = {
-    label: MODEL_DIR / filename
-    for label, filename in CHECKPOINT_CHOICES.items()
-    if (MODEL_DIR / filename).is_file()
-}
 
-with st.sidebar:
-    st.header("Prediction settings")
-    st.caption("Choose a trained model checkpoint.")
-    if available:
-        selected_label = st.selectbox("Training method", list(available.keys()))
-        selected_path = available[selected_label]
-        st.success("Checkpoint available")
-    else:
-        selected_label = None
-        selected_path = None
-        st.warning("No trained model has been added yet.")
-        st.code("models/resnet18_final.pth")
-    st.divider()
-    st.markdown("**Dataset**")
-    st.write("200 bird species · CUB-200")
-    st.markdown("**Model architecture**")
-    st.write("ImageNet-pretrained ResNet18 with a 200-class head")
-    st.markdown("**Inference**")
-    st.write("CPU · local processing · no training required")
+def normalize_method(text: str) -> str | None:
+    key = text.strip().lower().replace("-", "_").replace(" ", "_")
+    if key in {"head_only", "frozen_resnet18", "frozen_backbone", "frozen"}:
+        return "Frozen ResNet18"
+    if key in {"partial_finetune", "partial_fine_tuning", "partial_fine_tuning_resnet18"}:
+        return "Partial Fine-Tuning"
+    if key in {"full_finetune", "full_fine_tuning", "full_fine_tuning_resnet18"}:
+        return "Full Fine-Tuning"
+    return None
 
-predict_tab, results_tab, about_tab = st.tabs(
-    ["Identify a bird", "Model comparison", "About the project"]
-)
 
-with predict_tab:
-    st.markdown('<div class="section-title">Upload a bird photograph</div>', unsafe_allow_html=True)
-    st.write("Upload a clear photo of a bird. The application shows the top five species predictions.")
-
-    left, right = st.columns([1, 1.08], gap="large")
-    with left:
-        upload = st.file_uploader(
-            "Choose a JPG, PNG, or WebP image",
-            type=["jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=False,
-        )
-        image = None
-        if upload is not None:
+def model_performance():
+    # Historical results are shown until newer matching experiment files are added.
+    cv = {
+        "Frozen ResNet18": (53.89, 53.35),
+        "Partial Fine-Tuning": (65.22, 64.71),
+        "Full Fine-Tuning": (None, None),
+    }
+    for row in read_csv_rows("cv_summary.csv"):
+        label = normalize_method(row.get("mode", "") or row.get("training_method", ""))
+        if label and row.get("mean_top1") and row.get("mean_macro"):
             try:
-                image = Image.open(BytesIO(upload.getvalue())).convert("RGB")
-                st.image(image, caption="Your uploaded photograph", use_container_width=True)
-            except (UnidentifiedImageError, OSError, ValueError):
-                st.error("This file could not be opened as an image. Please upload another image.")
-        predict_clicked = st.button(
-            "Identify bird species",
-            type="primary",
-            use_container_width=True,
-            disabled=(image is None or selected_path is None),
-        )
+                cv[label] = (float(row["mean_top1"]), float(row["mean_macro"]))
+            except ValueError:
+                pass
 
-    with right:
-        st.markdown('<div class="section-title">Your prediction</div>', unsafe_allow_html=True)
-        if predict_clicked and image is not None and selected_path is not None:
+    # This represents the earlier partial fine-tuning FINAL TEST evaluation.
+    stats = {"top1": 69.27, "macro": 69.06, "top5": 90.37, "images": 1204}
+    stats_note = "Previously evaluated Partial Fine-Tuning ResNet18 · 1,204 test images."
+    for row in read_csv_rows("FINAL_RESULTS_TABLE.csv") or read_csv_rows("final_test_results_all_methods.csv"):
+        label = normalize_method(row.get("mode", "") or row.get("training_method", ""))
+        if label == "Partial Fine-Tuning":
             try:
-                model, names, metadata = load_checkpoint(str(selected_path))
-                predictions = predict_species(image, model, names)
-            except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
-                st.error(f"Unable to load the model or predict this image: {exc}")
-            else:
-                top_species = str(predictions.iloc[0]["Bird species"])
-                top_score = float(predictions.iloc[0]["Score (%)"])
-                st.subheader(top_species)
-                st.metric("Top prediction score", f"{top_score:.2f}%")
-                st.caption(f"Model used: {selected_label}")
-                if top_score < 35:
-                    st.info("The leading score is relatively low. Review the other top-five species too.")
+                stats = {
+                    "top1": float(row["top1_accuracy"]),
+                    "macro": float(row["average_class_accuracy"]),
+                    "top5": float(row["top5_accuracy"]),
+                    "images": int(float(row["test_images"])),
+                }
+                stats_note = f"Partial Fine-Tuning ResNet18 · {stats['images']:,} test images (combined run)."
+            except (ValueError, KeyError, TypeError):
+                pass
+    return cv, stats, stats_note
 
-                st.markdown("**Five most likely species**")
-                st.bar_chart(
-                    predictions.set_index("Bird species")["Score (%)"],
-                    horizontal=True,
-                    x_label="Softmax score (%)",
-                )
-                st.dataframe(
-                    predictions.style.format({"Score (%)": "{:.2f}"}),
-                    hide_index=True,
-                    use_container_width=True,
-                )
-                st.download_button(
-                    "Download prediction table (CSV)",
-                    data=predictions.to_csv(index=False).encode("utf-8"),
-                    file_name="birdlens_prediction.csv",
-                    mime="text/csv",
-                )
-        else:
-            st.info("Your top-five predictions will appear here after you upload an image and press Identify.")
-        st.caption("Scores are 200-class softmax outputs, not calibrated confidence probabilities. A photo outside the 200 species may still receive a prediction.")
 
-with results_tab:
-    st.markdown('<div class="section-title">Model performance</div>', unsafe_allow_html=True)
-    st.write("Comparison of frozen-backbone, partial fine-tuning, and full fine-tuning ResNet18.")
+# ---------------------------------------------------------------------------
+# SHARED HEADER AND FOOTER
+# ---------------------------------------------------------------------------
+BIRD_SVG = """<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M16 7h.01M11 20l1-5M6 21l2-5M20 5c-2.7 2.3-5.5 3.1-8.2 3C7 7.8 4 10.9 4 15c0 1.9.6 3.5 2 4 2.4 1.2 5.9-.3 7-3 5.5.1 8-3.4 7-11Z"/>
+</svg>"""
 
-    final_df = load_csv_or_none("FINAL_RESULTS_TABLE.csv")
-    if final_df is not None and {
-        "training_method", "top1_accuracy", "average_class_accuracy"
-    }.issubset(final_df.columns):
-        st.subheader("Final test results")
-        cols = [
-            c for c in [
-                "training_method", "epochs", "top1_accuracy",
-                "average_class_accuracy", "top5_accuracy",
-                "correct_predictions", "test_images"
-            ] if c in final_df.columns
-        ]
-        st.dataframe(final_df[cols].round(2), hide_index=True, use_container_width=True)
-        chart_df = final_df.set_index("training_method")[["top1_accuracy", "average_class_accuracy"]]
-        chart_df.columns = ["Top-1 Accuracy (%)", "Average Class Accuracy (%)"]
-        st.bar_chart(chart_df, horizontal=True)
-        st.caption("Test results are descriptive; do not use test accuracy to choose or tune a model.")
-    else:
-        st.info("To show the final test comparison, upload `FINAL_RESULTS_TABLE.csv` from your combined training notebook into the application folder.")
+if "page" not in st.session_state:
+    st.session_state.page = "Home"
 
-    cv_df = load_csv_or_none("cv_summary.csv")
-    if cv_df is not None and {
-        "training_method", "mean_top1", "mean_macro"
-    }.issubset(cv_df.columns):
-        st.subheader("Three-fold cross-validation")
-        show_cols = [
-            c for c in ["training_method", "mean_top1", "mean_macro", "sd_macro", "median_best_epoch"]
-            if c in cv_df.columns
-        ]
-        st.dataframe(cv_df[show_cols].round(2), hide_index=True, use_container_width=True)
-        st.caption("Training-only cross-validation was used for model selection.")
-    else:
-        st.info("Optionally upload `cv_summary.csv` to display validation results.")
+nav_logo, nav_spacer, nav_home, nav_about = st.columns([4.9, 3.0, 1.0, 1.45], vertical_alignment="center")
+with nav_logo:
+    st.markdown(
+        f'<div class="logo-bar"><span class="logo-mark">{BIRD_SVG}</span>BirdLens AI</div>',
+        unsafe_allow_html=True,
+    )
+with nav_home:
+    if st.button("Home", key="nav_home", use_container_width=True, type="secondary"):
+        st.session_state.page = "Home"
+        st.rerun()
+with nav_about:
+    if st.button("About Model", key="nav_about", use_container_width=True, type="secondary"):
+        st.session_state.page = "About Model"
+        st.rerun()
 
-with about_tab:
-    st.markdown('<div class="section-title">How BirdLens works</div>', unsafe_allow_html=True)
+st.markdown('<div class="nav-shadow"></div>', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# HOME
+# ---------------------------------------------------------------------------
+if st.session_state.page == "Home":
     st.markdown(
         """
-        **Task:** Fine-grained image classification of 200 Caltech-UCSD Birds species.
+        <div class="hero">
+          <span class="eyebrow">CUB-200 · 200 Bird Species</span>
+          <h1 class="hero-title">Discover What Bird You're<br>Looking At</h1>
+          <p class="hero-subtitle">Upload a bird photo and let our AI identify its species.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        **Architecture:** ResNet18, initialized with ImageNet pretrained weights, with
-        the classification head replaced by dropout and a 200-class linear layer.
+    available = discover_models()
+    if not available:
+        st.warning(
+            "Bird identification is not connected yet. Add a trained ResNet18 "
+            "checkpoint to the models/ folder to activate predictions."
+        )
+    
+    upload_panel, prediction_panel = st.columns([1, 1], gap="medium")
 
-        **Training strategies:**
-        - **Frozen:** Train only the classification head.
-        - **Partial fine-tuning:** Update the last residual block and head.
-        - **Full fine-tuning:** Update all learnable model parameters.
+    with upload_panel:
+        with st.container(border=True):
+            st.markdown('<div class="panel-heading">Upload Bird Photo</div>', unsafe_allow_html=True)
+            uploaded = st.file_uploader(
+                "Drop your bird photo here, or click to browse",
+                type=["jpg", "jpeg", "png", "webp"],
+                label_visibility="visible",
+                accept_multiple_files=False,
+                key="bird_upload",
+            )
+            st.markdown('<div class="help-text">JPG · JPEG · PNG · WEBP</div>', unsafe_allow_html=True)
 
-        **Selection protocol:** Stratified 3-fold cross-validation on the cleaned
-        training data. Identical-image leakage and conflicting training labels were
-        audited before training. Final test results are reported separately.
+            image_bytes = None
+            if uploaded is not None:
+                image_bytes = uploaded.getvalue()
+                if len(image_bytes) > MAX_FILE_MB * 1024 * 1024:
+                    st.error(f"Please upload an image smaller than {MAX_FILE_MB} MB.")
+                    image_bytes = None
+                else:
+                    try:
+                        with Image.open(io.BytesIO(image_bytes)) as im:
+                            im.verify()
+                        with Image.open(io.BytesIO(image_bytes)) as im:
+                            preview = ImageOps.exif_transpose(im)
+                            st.image(preview.copy(), use_container_width=True)
+                    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+                        st.error("This file is not a valid image. Please choose another photograph.")
+                        image_bytes = None
 
-        **Loss and optimizer:** Cross-entropy loss and AdamW.
+            if available:
+                models = list(available)
+                selected_name = st.selectbox("AI Model", options=models, index=0)
+                selected_path = available[selected_name]
+            else:
+                selected_name = "Partial Fine-Tuning ResNet18"
+                selected_path = None
+                st.selectbox("AI Model", ["No checkpoint installed"], disabled=True)
+
+            uploaded_signature = None
+            if image_bytes is not None:
+                import hashlib
+                uploaded_signature = hashlib.sha256(image_bytes).hexdigest()
+            signature = (uploaded_signature, selected_name)
+            if st.session_state.get("prediction_signature") != signature:
+                st.session_state.pop("predictions", None)
+
+            predict_clicked = st.button(
+                "Identify Bird",
+                type="primary",
+                use_container_width=True,
+                disabled=(image_bytes is None or selected_path is None),
+                key="identify_bird",
+            )
+            if predict_clicked and selected_path is not None and image_bytes is not None:
+                with st.spinner("Analysing bird features…"):
+                    try:
+                        predictions = predict_bird(image_bytes, selected_path)
+                    except Exception as exc:
+                        st.error(f"Prediction failed. Check the model checkpoint. Details: {exc}")
+                    else:
+                        st.session_state.predictions = predictions
+                        st.session_state.prediction_signature = signature
+
+            st.markdown(
+                '<div class="help-text">Images are processed in memory and not saved by this app.</div>',
+                unsafe_allow_html=True,
+            )
+
+    with prediction_panel:
+        with st.container(border=True):
+            st.markdown('<div class="panel-heading">Prediction Results</div>', unsafe_allow_html=True)
+            predictions = st.session_state.get("predictions")
+            if predictions and st.session_state.get("prediction_signature") == signature:
+                top = predictions[0]
+                top_species = html.escape(top["species"])
+                st.markdown(
+                    f"""
+                    <div class="result-top">
+                      <div class="result-kicker">Top Prediction</div>
+                      <div class="result-name">{top_species}</div>
+                      <div class="result-score">{top['score']:.1f}%</div>
+                      <div class="result-caption">Model: {html.escape(selected_name)}</div>
+                    </div>
+                    <div class="rank-title">Top 5 Predictions</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                bars = []
+                for rank, item in enumerate(predictions, start=1):
+                    width = min(max(item["score"], 0), 100)
+                    bars.append(
+                        f'<div class="rank-row">'
+                        f'<div class="rank-meta"><span class="rank-name">{rank}. {html.escape(item["species"])}</span>'
+                        f'<b>{item["score"]:.1f}%</b></div>'
+                        f'<div class="bar-track"><div class="bar-fill {"top" if rank == 1 else ""}" style="width:{width:.2f}%"></div></div>'
+                        f'</div>'
+                    )
+                st.markdown("".join(bars), unsafe_allow_html=True)
+                st.caption("Scores are softmax outputs, not guaranteed calibrated probabilities.")
+            else:
+                st.markdown(
+                    """
+                    <div class="empty-state">
+                       <span class="empty-icon">◎</span>
+                       <p>Your bird identification results will appear here.</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    cv_stats, test_stats, stats_note = model_performance()
+    st.markdown('<h2 class="section-title">Our AI Model Performance</h2>', unsafe_allow_html=True)
+    st.markdown(f'<p class="section-subtitle">{html.escape(stats_note)}</p>', unsafe_allow_html=True)
+
+    stat_cols = st.columns(3, gap="medium")
+    for col, label, value in zip(
+        stat_cols,
+        ["TOP-1 ACCURACY", "AVERAGE CLASS ACCURACY", "TOP-5 ACCURACY"],
+        [test_stats["top1"], test_stats["macro"], test_stats["top5"]],
+    ):
+        with col:
+            st.markdown(
+                f'<div class="metric-card"><div class="metric-label">{label}</div>'
+                f'<div class="metric-value">{float(value):.2f}%</div></div>',
+                unsafe_allow_html=True,
+            )
+
+    table_rows = ""
+    for method in ["Frozen ResNet18", "Partial Fine-Tuning", "Full Fine-Tuning"]:
+        acc, macro = cv_stats[method]
+        table_rows += (
+            f"<tr><td>{html.escape(method)}</td>"
+            f"<td>{metric_text(acc)}</td><td>{metric_text(macro)}</td></tr>"
+        )
+    st.markdown(
+        f"""
+        <div class="table-shell">
+            <table class="compare-table">
+                <thead><tr>
+                    <th>Training Method</th>
+                    <th>Top-1 Accuracy (Cross-Validation)</th>
+                    <th>Average Class Accuracy (Cross-Validation)</th>
+                </tr></thead>
+                <tbody>{table_rows}</tbody>
+            </table>
+        </div>
+        <p class="table-note">Cross-validation results are distinct from final test accuracies.
+        Missing values are shown as pending, never estimated.</p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ABOUT MODEL
+# ---------------------------------------------------------------------------
+else:
+    st.markdown(
         """
+        <div class="about-wrap">
+           <div class="about-hero">
+             <h1>About BirdLens AI</h1>
+             <p>A bird species identification tool built for an Applied Machine Learning university project.</p>
+           </div>
+           <section class="info-card">
+             <h3>What is BirdLens AI?</h3>
+             <p>BirdLens AI is an image classification application designed to identify
+             200 bird species using deep learning.</p>
+           </section>
+           <section class="info-card">
+             <h3>AI Technology</h3>
+             <p>The application uses ResNet18 pretrained on ImageNet and adapted for the
+             CUB-200 bird classification task.</p>
+             <p>Three training methods are compared: Frozen, Partial Fine-Tuning and Full Fine-Tuning.</p>
+           </section>
+           <section class="info-card">
+             <h3>How Does It Work?</h3>
+             <div class="steps">
+               <div class="step"><span class="step-num">1</span>Upload a bird image.</div>
+               <div class="step"><span class="step-num">2</span>Select a ResNet18 training method.</div>
+               <div class="step"><span class="step-num">3</span>Click Identify Bird.</div>
+               <div class="step"><span class="step-num">4</span>View the top five predicted species.</div>
+             </div>
+           </section>
+           <section class="info-card alert">
+             <h3>Limitations</h3>
+             <p>The model can only classify species included in its 200 supported classes.</p>
+             <p>Predictions can be incorrect, especially for visually similar bird species.</p>
+           </section>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.write("**Inference preprocessing:**", preprocess_information())
-    st.warning(
-        "Research demonstration, not a definitive biological identification tool. "
-        "The model only knows 200 classes and may be inaccurate for unfamiliar species, "
-        "unusual lighting, or obstructed birds."
-    )
-    st.write("**For your assignment:** demonstrate image upload, five predictions, and cross-validation/test-result tables in your video.")
+
 
 st.markdown(
-    '<p class="footer-note">BirdLens · COS30082 Applied Machine Learning · CUB-200 · ResNet18</p>',
+    f'<div class="site-footer"><b>BirdLens AI | Applied Machine Learning Project</b>'
+    f'<span>© {date.today().year} BirdLens AI</span></div>',
     unsafe_allow_html=True,
 )
