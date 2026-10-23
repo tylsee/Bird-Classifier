@@ -419,7 +419,10 @@ if st.session_state.page == "Home":
         """
         <div class="hero">
           <span class="eyebrow">CUB-200 · 200 Bird Species</span>
-          <h1 class="hero-title">Identify What Bird You're<br>Looking At</h1>
+          <div class="hero-title" style="width:100%; max-width:none; text-align:center; margin:17px 0 12px;">
+                Identify What Bird You're<br>
+                Looking At
+          </div>
           <p class="hero-subtitle">Upload a bird photo and let our AI identify its species.</p>
         </div>
         """,
