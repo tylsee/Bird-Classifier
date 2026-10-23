@@ -401,10 +401,6 @@ with nav_home:
     if st.button("Home", key="nav_home", use_container_width=True, type="secondary"):
         st.session_state.page = "Home"
         st.rerun()
-with nav_about:
-    if st.button("About Model", key="nav_about", use_container_width=True, type="secondary"):
-        st.session_state.page = "About Model"
-        st.rerun()
 
 st.markdown('<div class="nav-shadow"></div>', unsafe_allow_html=True)
 
@@ -584,49 +580,6 @@ if st.session_state.page == "Home":
         """,
         unsafe_allow_html=True,
     )
-
-
-# ---------------------------------------------------------------------------
-# ABOUT MODEL
-# ---------------------------------------------------------------------------
-else:
-    st.markdown(
-        """
-        <div class="about-wrap">
-           <div class="about-hero">
-             <h1>About Bird Classifier AI</h1>
-             <p>A bird species identification tool built for an Applied Machine Learning university project.</p>
-           </div>
-           <section class="info-card">
-             <h3>What is Bird Classifier AI?</h3>
-             <p>Bird Classifier AI is an image classification application designed to identify
-             200 bird species using deep learning.</p>
-           </section>
-           <section class="info-card">
-             <h3>AI Technology</h3>
-             <p>The application uses ResNet18 pretrained on ImageNet and adapted for the
-             CUB-200 bird classification task.</p>
-             <p>Three training methods are compared: Frozen, Partial Fine-Tuning and Full Fine-Tuning.</p>
-           </section>
-           <section class="info-card">
-             <h3>How Does It Work?</h3>
-             <div class="steps">
-               <div class="step"><span class="step-num">1</span>Upload a bird image.</div>
-               <div class="step"><span class="step-num">2</span>Select a ResNet18 training method.</div>
-               <div class="step"><span class="step-num">3</span>Click Identify Bird.</div>
-               <div class="step"><span class="step-num">4</span>View the top five predicted species.</div>
-             </div>
-           </section>
-           <section class="info-card alert">
-             <h3>Limitations</h3>
-             <p>The model can only classify species included in its 200 supported classes.</p>
-             <p>Predictions can be incorrect, especially for visually similar bird species.</p>
-           </section>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
 
 st.markdown(
     f'<div class="site-footer"><b>Bird Classifier AI | Applied Machine Learning Project</b>'
